@@ -26,7 +26,15 @@ const argv = require('yargs')
 			alias: 'n',
 		},
 	})
-	.command(['serve', '*'], 'Compile files and start server', {
+	.command('*', 'Compile files, run the server, and watch for changes to files', {
+		port: {
+			describe: 'The server port to listen to',
+			type: 'number',
+			default: 3000,
+			alias: 'p',
+		},
+	})
+	.command(['serve'], 'Run server', {
 		port: {
 			describe: 'The server port to listen to',
 			type: 'number',
@@ -47,6 +55,13 @@ const argv = require('yargs')
 			alias: 's',
 		},
 	})
+	.command('generate:section', 'Generate a new section', {
+		name: {
+			describe: 'Name for your new section',
+			required: true,
+			alias: 'n',
+		},
+	})
 	.command('lint', 'Lint all JavaScript and Sass/SCSS files')
 	.command('transfer-files', 'Transfer all static assets and resources to docs folder')
 	.command('watch', 'Watch files for changes to recompile')
@@ -64,12 +79,12 @@ const plugins = {
 			'yodasws.gulp-pattern-replace': 'replaceString',
 			'gulp-autoprefixer': 'prefixCSS',
 			'gulp-run-command': 'cli',
+			'gulp-dart-sass': 'compileSass',
 			'gulp-sass-lint': 'lintSass',
 			'gulp-htmlmin': 'compileHTML',
 			'gulp-eslint': 'lintES',
 			'gulp-babel': 'compileJS',
 			'gulp-order': 'sort',
-			'gulp-sass': 'compileSass',
 			'gulp-file': 'newFile',
 		},
 		postRequireTransforms: {
@@ -87,11 +102,7 @@ plugins['connect.reload'] = plugins.connect.reload;
 // more options at https://github.com/postcss/autoprefixer#options
 const browsers = [
 	// browser strings detailed at https://github.com/ai/browserslist#queries
-	'last 2 Firefox versions',
-	'last 2 Chrome versions',
-	'Safari >= 10',
-	'ie_mob >= 11',
-	'ie >= 11',
+	'defaults',
 ];
 
 const options = {
@@ -107,7 +118,7 @@ const options = {
 					targets: browsers,
 				},
 			],
-		]
+		],
 	},
 	compileSass: {
 		importer: require('@mightyplow/sass-dedup-importer'),
@@ -137,15 +148,15 @@ const options = {
 		},
 		env: {
 			browser: true,
-			es6: true
+			es6: true,
 		},
 		rules: {
 
 'strict': [
-	2, 'global'
+	2, 'global',
 ],
 'indent': [
-	2, 'tab'
+	2, 'tab',
 ],
 'space-before-function-paren': 0,
 'comma-dangle': 0,
@@ -347,7 +358,7 @@ const options = {
 						} catch (e) {}
 					});
 				});
-				let requires = 'const json = {};\n';
+				let requires = 'window.json = {};\n';
 				Object.keys(requiredFiles).forEach((i) => {
 					if (Number.isNaN(Number.parseInt(i, 10))) {
 						requires += `json.${i} = `;
@@ -405,13 +416,15 @@ function runTasks(task) {
 	return stream.pipe(gulp.dest(task.dest || options.dest));
 }
 
-;[
+[
 	{
 		name: 'compile:sass',
 		src: [
 			'src/**/*.{sa,sc,c}ss',
+			'!src/scss/*.{sa,sc,c}ss',
+			'!src/txt/**/*.{sa,sc,c}ss',
 			'!**/*.min.css',
-			'!**/min.css'
+			'!**/min.css',
 		],
 		tasks: [
 			'lintSass',
@@ -481,7 +494,7 @@ function runTasks(task) {
 			'./src/**/*.ttf',
 		],
 		tasks: [],
-	}
+	},
 ].forEach((task) => {
 	gulp.task(task.name, () => {
 		return runTasks(task);
@@ -590,7 +603,6 @@ gulp.task('generate:page', gulp.series(
 	canonicalRoute: '/${argv.sectionCC}${argv.nameCC}/',
 	route: '/${argv.sectionCC}${argv.nameCC}/?',
 }).on('load', () => {
-	console.log('Page loaded!');
 });\n`
 			return plugins.newFile(`ctrl.js`, str, { src: true })
 				.pipe(gulp.dest(`./src/pages/${argv.sectionCC}${argv.nameCC}`));
@@ -600,6 +612,58 @@ gulp.task('generate:page', gulp.series(
 			const site = require('./src/app.json');
 			if (!site.pages) site.pages = [];
 			site.pages.push(`${argv.sectionCC}${argv.nameCC}`);
+			return plugins.newFile('app.json', JSON.stringify(site, null, '\t'), { src: true })
+				.pipe(gulp.dest(`./src`));
+		},
+	),
+	plugins.cli([
+		`git status`,
+	]),
+));
+
+gulp.task('generate:section', gulp.series(
+	(done) => {
+		argv.nameCC = camelCase(argv.name);
+		argv.module = camelCase('page', argv.nameCC);
+		done();
+	},
+	gulp.parallel(
+		() => {
+			const str = `[y-page='${argv.module}'] {\n\t/* SCSS Goes Here */\n}\n`;
+			return plugins.newFile(`${argv.nameCC}.scss`, str, { src: true })
+				.pipe(gulp.dest(`./src/pages/${argv.nameCC}`));
+		},
+		() => {
+			const str = `<h2>${argv.name}</h2>\n`;
+			return plugins.newFile('index.html', str, { src: true })
+				.pipe(gulp.dest(`./src/pages/${argv.nameCC}`));
+		},
+		() => {
+			const str = `yodasws.page('${argv.module}').setRoute({
+	title: '${argv.name}',
+	canonicalRoute: '/${argv.nameCC}/',
+	template(match, ...p) {
+		const path = p.join('/').replace(/\\/+/g, '/').replace(/^\\\/|\\\/$/g, '').split('/').filter(p => p != '');
+		if (path.length === 0) {
+			return 'pages/${argv.nameCC}/index.html';
+		}
+		return {
+			canonicalRoute: '/${argv.nameCC}/' + path.join('/') + '/',
+			template: 'pages/${argv.nameCC}/' + path.join('.') + '.html',
+		};
+	},
+	route: '/${argv.nameCC}(/.*)*',
+}).on('load', () => {
+	console.log('Page loaded!');
+});\n`
+			return plugins.newFile(`ctrl.js`, str, { src: true })
+				.pipe(gulp.dest(`./src/pages/${argv.nameCC}`));
+		},
+		() => {
+			// Add to app.json
+			const site = require('./src/app.json');
+			if (!site.pages) site.pages = [];
+			site.pages.push(`${argv.nameCC}`);
 			return plugins.newFile('app.json', JSON.stringify(site, null, '\t'), { src: true })
 				.pipe(gulp.dest(`./src`));
 		},
