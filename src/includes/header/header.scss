@@ -1,6 +1,6 @@
-$header-color: black;
-$header-bg: lightgreen;
-$header-second-color: black;
+$header-color: white;
+$header-bg: $main-color;
+$header-second-color: white;
 
 body > header {
 	color: $header-color;
