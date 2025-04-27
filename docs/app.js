@@ -1,1 +1,1 @@
-"use strict";window.json={},yodasws.page("home").setRoute({template:"pages/home.html",route:"/"});
+"use strict";yodasws.page("home").setRoute({template:"pages/home.html",route:"/"});
